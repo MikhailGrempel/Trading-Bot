@@ -2,6 +2,7 @@ export const REASON_LABELS = {
   rsi_oversold: "RSI oversold",
   rsi_overbought: "RSI overbought",
   stoploss: "Stop",
+  trailing_stop: "Trailing stop",
   roi: "Target",
 }
 

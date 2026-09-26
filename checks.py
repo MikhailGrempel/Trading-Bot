@@ -70,6 +70,9 @@ def run_checks() -> None:
     _check_stop_then_start_skips_the_pause()
     _check_cooldown_blocks_reentry_after_stop()
     _check_percent_stake_from_balance()
+    _check_consecutive_losses_pause_entries()
+    _check_max_drawdown_pause_entries()
+    _check_slippage_worsens_round_trip()
     print("checks passed")
 
 
@@ -343,6 +346,59 @@ def _check_percent_stake_from_balance() -> None:
     bot.run(data)
     assert len(bot.portfolio.open_trades) == 1
     assert math.isclose(bot.portfolio.open_trades[0].stake, 100.0, abs_tol=1e-9)
+
+
+def _check_consecutive_losses_pause_entries() -> None:
+    strategy = RuleStrategy(
+        entry=lambda row: "enter",
+        exit=lambda row: None,
+        stoploss=-0.01,
+        roi=10.0,
+    )
+    candles = [_candle(i, 100, 100, 98, 99) for i in range(8)]
+    bot = _bot(
+        strategy,
+        stake=50,
+        balance=1000,
+        fee=0,
+        max_open_trades=1,
+        max_consecutive_losses=3,
+    )
+    bot.run({"BTC/USD": candles})
+    assert bot.consecutive_losses >= 3
+    assert bot.entries_blocked
+    assert bot.block_reason == "max_consecutive_losses"
+    assert bot.skips["circuit_breaker"] >= 1
+
+
+def _check_max_drawdown_pause_entries() -> None:
+    strategy = RuleStrategy(
+        entry=lambda row: "enter",
+        exit=lambda row: None,
+        stoploss=-0.50,
+        roi=10.0,
+    )
+    candles = [_candle(i, 100, 100, 40, 50) for i in range(6)]
+    bot = _bot(
+        strategy,
+        stake=100,
+        balance=1000,
+        fee=0,
+        max_drawdown=0.08,
+        max_consecutive_losses=0,
+    )
+    bot.run({"BTC/USD": candles})
+    assert bot.entries_blocked
+    assert bot.block_reason == "max_drawdown"
+
+
+def _check_slippage_worsens_round_trip() -> None:
+    without = Portfolio(1000, fee_rate=0.001, slippage_rate=0.0)
+    with_slip = Portfolio(1000, fee_rate=0.001, slippage_rate=0.01)
+    for portfolio in (without, with_slip):
+        trade = portfolio.open_trade("BTC/USD", _time(0), price=100, stake=100)
+        portfolio.close_trade(trade, _time(1), price=100, reason="test")
+    assert (with_slip.closed_trades[0].profit or 0) < (without.closed_trades[0].profit or 0)
 
 
 def _check_forward_stands_still_when_no_new_candle() -> None:

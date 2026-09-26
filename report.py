@@ -55,6 +55,7 @@ def render(bot: Bot, data: dict[str, list[Candle]], stake_currency: str) -> str:
             "pair_already_open": "that pair was already open",
             "entry_and_exit_on_same_candle": "buy and sell signal on the same candle",
             "cooldown": "cooldown after a recent exit on that pair",
+            "circuit_breaker": "portfolio circuit breaker (new entries paused)",
         }
         for key, count in bot.skips.most_common():
             lines.append(f"  {count:4d}  {labels.get(key, key)}")

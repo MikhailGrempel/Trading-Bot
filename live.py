@@ -92,6 +92,8 @@ def step(base: dict, form: dict | None = None) -> dict:
             acted = 0
         else:
             _restore(bot, state)
+            if command == "start":
+                bot.reset_circuit()
             running, last_fill, should_trade = trading_gate(
                 bool(state.get("running", True)),
                 command or None,
@@ -148,6 +150,10 @@ def _restore(bot: Bot, state: dict) -> None:
     bot.cooldown_until = {
         pair: _parse(stamp) for pair, stamp in state.get("cooldown_until", {}).items()
     }
+    bot.peak_equity = float(state.get("peak_equity", bot.portfolio.starting_balance))
+    bot.consecutive_losses = int(state.get("consecutive_losses", 0))
+    bot.entries_blocked = bool(state.get("entries_blocked", False))
+    bot.block_reason = state.get("block_reason")
 
 
 def _payload(bot: Bot, data: dict[str, list[Candle]], config: dict, state: dict, acted: int) -> dict:
@@ -212,6 +218,12 @@ def _decisions(bot: Bot, data: dict[str, list[Candle]], running: bool) -> list[d
             if entry and exit_now:
                 text = f"{pair}: {rsi_text}. That is both a buy and a sell, so the bot waits."
                 kind = "wait"
+            elif entry and bot.entries_blocked:
+                text = (
+                    f"{pair}: {rsi_text}, which is a buy, but new entries are paused "
+                    f"({bot.block_reason or 'circuit breaker'}). Press Start to reset."
+                )
+                kind = "wait"
             elif entry and len(bot.portfolio.open_trades) >= bot.max_open_trades:
                 text = f"{pair}: {rsi_text}, which is a buy, but the trade slots are full."
                 kind = "wait"
@@ -257,6 +269,10 @@ def _write_state(bot: Bot, state: dict, config: dict) -> None:
         "events": [_event_out(event) for event in bot.events],
         "skips": dict(bot.skips),
         "cooldown_until": {pair: _clock(when) for pair, when in bot.cooldown_until.items()},
+        "peak_equity": bot.peak_equity,
+        "consecutive_losses": bot.consecutive_losses,
+        "entries_blocked": bot.entries_blocked,
+        "block_reason": bot.block_reason,
         "rules": {
             "rsi_entry": config["rsi_entry"],
             "rsi_exit": config["rsi_exit"],
@@ -278,6 +294,11 @@ def _read_state() -> dict | None:
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        backup = STATE_PATH.with_suffix(".corrupt.json")
+        try:
+            STATE_PATH.replace(backup)
+        except OSError:
+            pass
         return None
 
 

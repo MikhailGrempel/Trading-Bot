@@ -9,6 +9,7 @@ The page is the React app in web/. The wallet trades forward when a new candle c
 from __future__ import annotations
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
@@ -19,8 +20,32 @@ from session import load_config
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "web" / "dist"
 LEGACY = ROOT / "ui" / "index.html"
-HOST = "127.0.0.1"
-PORT = 8765
+DEFAULT_PORT = 8765
+
+
+def listen_host() -> str:
+    if os.environ.get("HOST"):
+        return os.environ["HOST"]
+    # Render and most PaaS set PORT; bind all interfaces in that case.
+    return "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+
+
+def listen_port() -> int:
+    return int(os.environ.get("PORT", str(DEFAULT_PORT)))
+
+
+def allowed_origins(port: int) -> set[str]:
+    origins = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    }
+    for key in ("RENDER_EXTERNAL_URL", "APP_URL"):
+        value = os.environ.get(key, "").strip().rstrip("/")
+        if value:
+            origins.add(value)
+    return origins
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -37,13 +62,17 @@ MIME = {
 
 
 def main() -> None:
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    host = listen_host()
+    port = listen_port()
+    Handler.allowed_origins = allowed_origins(port)
+    server = ThreadingHTTPServer((host, port), Handler)
+    public = os.environ.get("RENDER_EXTERNAL_URL", "").strip() or f"http://{host}:{port}"
     if (DIST / "index.html").is_file():
-        print(f"Paper bot UI: http://{HOST}:{PORT}")
+        print(f"Paper bot UI: {public}")
     else:
         print("React build not found. From the web folder run: npm install && npm run build")
-        print(f"Serving the previous page at http://{HOST}:{PORT}")
-    print("Leave this window open. Nothing is sent to an exchange.")
+        print(f"Serving the previous page at {public}")
+    print("Leave this process running. Nothing is sent to an exchange.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -51,6 +80,8 @@ def main() -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
+    allowed_origins: set[str] = set()
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self._cors()
@@ -58,6 +89,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        if path == "/health":
+            self._send(200, "application/json; charset=utf-8", b'{"ok":true}')
+            return
         if path == "/api/run":
             self._run({})
             return
@@ -126,7 +160,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if origin in self.allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 

@@ -42,7 +42,7 @@ Each pair is a list of candles. A candle is open, high, low, close, and volume f
 On every new candle the bot does four things, in this order. The code is `bot.py`, method `run`.
 
 1. It gives the strategy only candles that have already closed. The candle that just opened is hidden, so the strategy cannot peek at the future.
-2. The strategy computes RSI. RSI under 30 is a buy. RSI over 70 is a sell. That logic is `strategy.py`.
+2. The strategy computes RSI plus an optional trend filter. By default it buys a pullback in an uptrend when RSI turns back up; RSI over 70 is a sell. That logic is `strategy.py`.
 3. For each open trade it sells if one of these is true:
    - price fell through the stop (`stoploss`, for example -10%)
    - price rose through the target (`minimal_roi`, for example +2%)
@@ -96,11 +96,17 @@ Freqtrade also does live orders, futures, leverage, pairlists, Telegram, and a w
 Edit `config.json`:
 
 - `rsi_entry` / `rsi_exit`: when RSI buys and sells
+- `trend_period` / `confirm_upturn`: uptrend filter and RSI recovery entry (`trend_period` 0 turns the filter off)
 - `stoploss`: a negative number, such as `-0.10` for -10%
 - `minimal_roi`: a positive number, such as `0.02` for +2%
-- `stake_amount`: USD spent on each buy
+- `trailing_stop`, `trailing_stop_positive`, `trailing_stop_positive_offset`: optional trailing stop after a profit threshold
+- `stake_type`: `fixed` or `percent`; `stake_amount` is USD or percent of tradable balance
+- `tradable_balance_ratio`, `min_stake`, `max_stake`: sizing limits
+- `cooldown_candles`, `cooldown_after`: pause re-entry on a pair after an exit (`stop` or `any`)
+- `max_consecutive_losses`, `max_drawdown`: portfolio circuit breakers (0 disables)
 - `max_open_trades`: how many positions can be open at once
 - `fee`: fraction taken on each order (`0.001` is 0.1%)
+- `slippage`: fraction worse on each fill (`0.0005` is 0.05% on buy and sell)
 
 To use a different signal, copy `RsiStrategy` in `strategy.py` and change `entry_reason` and `exit_reason`. Keep the stop and the target on the strategy. The bot will apply them.
 

@@ -38,14 +38,17 @@ class Trade:
 
 
 class Portfolio:
-    def __init__(self, balance: float, fee_rate: float) -> None:
+    def __init__(self, balance: float, fee_rate: float, slippage_rate: float = 0.0) -> None:
         if balance <= 0:
             raise ValueError("starting balance must be positive")
         if not 0 <= fee_rate < 1:
             raise ValueError("fee must be between 0 and 1")
+        if not 0 <= slippage_rate < 1:
+            raise ValueError("slippage must be between 0 and 1")
         self.starting_balance = balance
         self.balance = balance
         self.fee_rate = fee_rate
+        self.slippage_rate = slippage_rate
         self.open_trades: list[Trade] = []
         self.closed_trades: list[Trade] = []
 
@@ -59,17 +62,18 @@ class Portfolio:
         if price <= 0 or stake <= 0:
             raise ValueError("price and stake must be positive")
 
+        fill = price * (1 + self.slippage_rate)
         fee = stake * self.fee_rate
-        amount = (stake - fee) / price
+        amount = (stake - fee) / fill
         self.balance -= stake
         trade = Trade(
             pair=pair,
             entry_time=when,
-            entry_price=price,
+            entry_price=fill,
             amount=amount,
             stake=stake,
             fee_open=fee,
-            high_water=price,
+            high_water=fill,
         )
         self.open_trades.append(trade)
         return trade
@@ -81,11 +85,12 @@ class Portfolio:
         if price <= 0:
             raise ValueError("price must be positive")
 
-        gross = trade.amount * price
+        fill = price * (1 - self.slippage_rate)
+        gross = trade.amount * fill
         fee = gross * self.fee_rate
         self.balance += gross - fee
         trade.exit_time = when
-        trade.exit_price = price
+        trade.exit_price = fill
         trade.fee_close = fee
         trade.exit_reason = reason
         trade.profit = (gross - fee) - trade.stake
@@ -93,14 +98,16 @@ class Portfolio:
         self.closed_trades.append(trade)
 
     def unrealized(self, trade: Trade, price: float) -> float:
-        """Profit if the open trade were sold at `price` right now."""
-        gross = trade.amount * price
+        """Profit if the open trade were sold at `price` right now (with slippage and fee)."""
+        fill = price * (1 - self.slippage_rate)
+        gross = trade.amount * fill
         fee = gross * self.fee_rate
         return (gross - fee) - trade.stake
 
     def equity(self, prices: dict[str, float]) -> float:
-        """Cash plus the value of coins still held, after a hypothetical sell fee."""
+        """Cash plus mark-to-market value after a hypothetical sell (slippage and fee)."""
         value = self.balance
         for trade in self.open_trades:
-            value += trade.amount * prices[trade.pair] * (1 - self.fee_rate)
+            fill = prices[trade.pair] * (1 - self.slippage_rate)
+            value += trade.amount * fill * (1 - self.fee_rate)
         return value

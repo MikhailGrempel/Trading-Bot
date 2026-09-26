@@ -1,0 +1,13 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: tradingbot-paper
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install -r requirements.txt && cd web && npm install && npm run build
+    startCommand: python ui.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10

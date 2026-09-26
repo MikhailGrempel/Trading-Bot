@@ -35,6 +35,9 @@ class Bot:
         max_stake: float | None = None,
         cooldown_candles: int = 0,
         cooldown_after: str = "stop",
+        max_consecutive_losses: int = 0,
+        max_drawdown: float = 0.0,
+        slippage: float = 0.0,
     ) -> None:
         if max_open_trades < 1:
             raise ValueError("max_open_trades must be >= 1")
@@ -48,6 +51,12 @@ class Bot:
             raise ValueError("cooldown_candles must be >= 0")
         if cooldown_after not in ("stop", "any"):
             raise ValueError("cooldown_after must be 'stop' or 'any'")
+        if max_consecutive_losses < 0:
+            raise ValueError("max_consecutive_losses must be >= 0")
+        if max_drawdown < 0 or max_drawdown >= 1:
+            raise ValueError("max_drawdown must be between 0 and 1 (0 disables it)")
+        if not 0 <= slippage < 1:
+            raise ValueError("slippage must be between 0 and 1")
 
         if stake_type == "fixed":
             if stake_amount <= 0:
@@ -71,10 +80,28 @@ class Bot:
         self.cooldown_candles = cooldown_candles
         self.cooldown_after = cooldown_after
         self.max_open_trades = max_open_trades
-        self.portfolio = Portfolio(starting_balance, fee)
+        self.slippage = slippage
+        self.portfolio = Portfolio(starting_balance, fee, slippage)
         self.events: list[dict] = []
         self.skips: Counter[str] = Counter()
         self.cooldown_until: dict[str, datetime] = {}
+        self.max_consecutive_losses = max_consecutive_losses
+        self.max_drawdown = max_drawdown
+        self.peak_equity = starting_balance
+        self.consecutive_losses = 0
+        self.entries_blocked = False
+        self.block_reason: str | None = None
+
+    def reset_circuit(self) -> None:
+        """Allow new entries again and reset the equity peak (e.g. after Stop/Start)."""
+        self.entries_blocked = False
+        self.block_reason = None
+        self.consecutive_losses = 0
+        prices = {t.pair: t.entry_price for t in self.portfolio.open_trades}
+        if prices:
+            self.peak_equity = max(self.peak_equity, self.portfolio.equity(prices))
+        else:
+            self.peak_equity = max(self.peak_equity, self.portfolio.balance)
 
     def run(self, data: dict[str, list[Candle]]) -> None:
         pairs = list(data)
@@ -115,10 +142,14 @@ class Bot:
 
         for pair in pairs:
             self._try_entry(pair, signals[pair], fill[pair], closed_this_candle)
+        self._check_drawdown(fill)
 
     def _try_entry(self, pair: str, row: dict, candle: Candle, closed_this_candle: set[str]) -> None:
         entry = self.strategy.entry_reason(row)
         if entry is None:
+            return
+        if self.entries_blocked:
+            self.skips["circuit_breaker"] += 1
             return
         if self.strategy.exit_reason(row) is not None:
             self.skips["entry_and_exit_on_same_candle"] += 1
@@ -145,7 +176,7 @@ class Bot:
                 "time": candle.time,
                 "action": "ENTER",
                 "pair": pair,
-                "price": candle.open,
+                "price": trade.entry_price,
                 "stake": stake,
                 "reason": entry,
                 "rsi": row.get("rsi"),
@@ -234,15 +265,50 @@ class Bot:
             delta = timedelta(minutes=INTERVAL_MINUTES * self.cooldown_candles)
             self.cooldown_until[pair] = when + delta
 
+    def _check_drawdown(self, fill: dict[str, Candle]) -> None:
+        prices = {pair: candle.close for pair, candle in fill.items()}
+        equity = self.portfolio.equity(prices)
+        if equity > self.peak_equity:
+            self.peak_equity = equity
+        if self.max_drawdown <= 0 or self.peak_equity <= 0:
+            return
+        drawdown = (self.peak_equity - equity) / self.peak_equity
+        if drawdown >= self.max_drawdown:
+            self._block_entries("max_drawdown")
+
+    def _block_entries(self, reason: str) -> None:
+        priority = {"max_drawdown": 2, "max_consecutive_losses": 1}
+        if self.entries_blocked:
+            current = priority.get(self.block_reason or "", 0)
+            if priority.get(reason, 0) <= current:
+                return
+        self.entries_blocked = True
+        self.block_reason = reason
+
+    def _register_closed_pnl(self, profit: float) -> None:
+        if profit <= 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+            if self.entries_blocked and self.block_reason == "max_consecutive_losses":
+                self.entries_blocked = False
+                self.block_reason = None
+        if (
+            self.max_consecutive_losses > 0
+            and self.consecutive_losses >= self.max_consecutive_losses
+        ):
+            self._block_entries("max_consecutive_losses")
+
     def _close(self, trade: Trade, candle: Candle, price: float, reason: str, row: dict) -> None:
         self.portfolio.close_trade(trade, candle.time, price, reason)
         self._set_cooldown(trade.pair, candle.time, reason)
+        self._register_closed_pnl(trade.profit or 0.0)
         self.events.append(
             {
                 "time": candle.time,
                 "action": "EXIT",
                 "pair": trade.pair,
-                "price": price,
+                "price": trade.exit_price,
                 "stake": trade.stake,
                 "profit": trade.profit,
                 "reason": reason,

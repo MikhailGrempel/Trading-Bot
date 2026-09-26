@@ -7,4 +7,5 @@ venv/
 *.local
 .DS_Store
 web/node_modules/
+.tools/
 data/paper_state.json

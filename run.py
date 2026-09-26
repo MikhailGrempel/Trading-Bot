@@ -46,8 +46,15 @@ def main() -> None:
         f"Wallet {config['dry_run_wallet']:.0f} {config['stake_currency']}, "
         f"stake {config['stake_amount']:.0f}, "
         f"max open trades {config['max_open_trades']}, "
-        f"fee {config['fee'] * 100:.2f}% per order"
+        f"fee {config['fee'] * 100:.2f}% per order, "
+        f"slippage {float(config.get('slippage', 0)) * 100:.3f}% each fill"
     )
+    stake_type = config.get("stake_type", "fixed")
+    if stake_type == "percent":
+        print(
+            f"Stake {config['stake_amount']:.1f}% of tradable balance "
+            f"(min {config.get('min_stake', 0)}, max {config.get('max_stake', '—')})"
+        )
     print(f"Pairs: {', '.join(config['pairs'])}")
     stop_price = 100 * (1 + config["stoploss"])
     target_price = 100 * (1 + config["minimal_roi"])
@@ -58,6 +65,8 @@ def main() -> None:
     print("  if one candle hits both, the stop is used")
     print("  if RSI says sell, the bot sells at the next candle's open")
     print("  the fee is charged on the buy and again on the sell")
+    if float(config.get("slippage", 0)) > 0:
+        print("  slippage makes buys slightly worse and sells slightly worse than the candle price")
     print()
 
     print(render(bot, data, config["stake_currency"]))

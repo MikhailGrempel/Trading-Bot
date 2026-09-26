@@ -5,7 +5,7 @@ import { money, price, reasonLabel, signedMoney, signedPct, STATE_LABELS, tone, 
 
 export function Dashboard() {
   const { payload } = useBot()
-  const { summary, rules, currency, live } = payload
+  const { summary, rules, currency, live, circuit } = payload
   const unrealized = payload.open_trades.reduce((sum, trade) => sum + trade.unrealized, 0)
   const recent = [...payload.trades].reverse().slice(0, 6)
   const activity = [...payload.markers].reverse().slice(0, 8)
@@ -68,6 +68,16 @@ export function Dashboard() {
               <dt>Fee</dt>
               <dd>{rules.fee_percent.toFixed(2)}% each side</dd>
             </div>
+            <div>
+              <dt>Slippage</dt>
+              <dd>{(rules.slippage_percent ?? 0).toFixed(3)}% each fill</dd>
+            </div>
+            {circuit?.entries_blocked ? (
+              <div>
+                <dt>Circuit</dt>
+                <dd className="down">Entries paused ({circuit.block_reason})</dd>
+              </div>
+            ) : null}
           </dl>
           <p className="muted">{live.status}</p>
         </section>

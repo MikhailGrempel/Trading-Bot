@@ -79,7 +79,8 @@ export function Rules() {
         </form>
         <p className="muted">
           Paper wallet {money(rules.wallet)} {currency}. Fee {rules.fee_percent.toFixed(2)}% on the buy and again on the sell.
-          The fee and the starting wallet stay in config.json.
+          Slippage {(rules.slippage_percent ?? 0).toFixed(3)}% on each fill (buys pay more, sells receive less).
+          Stake mode: {rules.stake_type || "fixed"}. Risk limits and slippage are set in config.json.
         </p>
       </section>
       <div className="stack">
@@ -100,7 +101,7 @@ export function Rules() {
           </p>
           <p className="muted">
             Example, buy at 100 with a 10% stop and a 2% target: a low of 80 sells at 90, a high of 130 sells at 102,
-            and a candle that touches both sells at 90. Both fees are paid, so a round trip at the same price is a small loss.
+            and a candle that touches both sells at 90. Fees and slippage apply, so a round trip at the same candle price is a small loss.
           </p>
           <p className="muted">
             Prices are Kraken's public 15-minute candles. Nothing is sent to an exchange.

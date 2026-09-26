@@ -19,6 +19,7 @@ SKIP_LABELS = {
     "pair_already_open": "that pair was already open",
     "entry_and_exit_on_same_candle": "buy and sell signal on the same candle",
     "cooldown": "cooldown after a recent exit on that pair",
+    "circuit_breaker": "portfolio circuit breaker (new entries paused)",
 }
 
 REASON_LABELS = {
@@ -101,6 +102,9 @@ def bot_from_config(config: dict, strategy: RsiStrategy | None = None) -> Bot:
         max_stake=float(max_stake) if max_stake is not None else None,
         cooldown_candles=int(config.get("cooldown_candles", 0)),
         cooldown_after=str(config.get("cooldown_after", "stop")),
+        max_consecutive_losses=int(config.get("max_consecutive_losses", 0)),
+        max_drawdown=float(config.get("max_drawdown", 0.0)),
+        slippage=float(config.get("slippage", 0.0)),
     )
 
 
@@ -207,6 +211,8 @@ def to_payload(bot: Bot, data: dict[str, list[Candle]], config: dict) -> dict:
             "stake_amount": float(config["stake_amount"]),
             "max_open_trades": int(config["max_open_trades"]),
             "fee_percent": float(config["fee"]) * 100,
+            "slippage_percent": float(config.get("slippage", 0.0)) * 100,
+            "stake_type": str(config.get("stake_type", "fixed")),
             "wallet": float(config["dry_run_wallet"]),
         },
         "summary": {
@@ -218,6 +224,17 @@ def to_payload(bot: Bot, data: dict[str, list[Candle]], config: dict) -> dict:
             "wins": wins,
             "losses": len(closed) - wins,
             "open": len(portfolio.open_trades),
+        },
+        "circuit": {
+            "entries_blocked": bot.entries_blocked,
+            "block_reason": bot.block_reason,
+            "peak_equity": bot.peak_equity,
+            "consecutive_losses": bot.consecutive_losses,
+            "drawdown_pct": (bot.peak_equity - equity) / bot.peak_equity
+            if bot.peak_equity > 0
+            else 0.0,
+            "max_drawdown_pct": float(config.get("max_drawdown", 0.0)),
+            "max_consecutive_losses": int(config.get("max_consecutive_losses", 0)),
         },
         "trades": trades,
         "open_trades": open_trades,
@@ -245,6 +262,12 @@ def _notes(bot: Bot, reasons: dict[str, int], profit: float) -> list[str]:
         return ["No trades. A buy needs a signal, a free slot, and enough cash at the same time."]
 
     notes = []
+    if bot.entries_blocked:
+        reason = bot.block_reason or "unknown"
+        notes.append(
+            f"New entries are paused ({reason}). Open trades can still exit. "
+            "Press Start in the live UI to reset the circuit breaker."
+        )
     if "stoploss" not in reasons:
         notes.append(
             f"Stop {bot.strategy.stoploss * 100:.1f}% was checked on every open trade. "
