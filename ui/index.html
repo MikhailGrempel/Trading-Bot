@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper trading bot</title>
+  <style>
+    :root {
+      --bg: #f3f4f6;
+      --ink: #1a1d21;
+      --muted: #5c6570;
+      --line: #d8dee6;
+      --paper: #ffffff;
+      --buy: #0b7a43;
+      --sell: #b42318;
+      --price: #1d4e89;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header, main { width: min(1100px, calc(100vw - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; }
+    h1 { margin: 0; font-size: 22px; font-weight: 650; }
+    header p { margin: 4px 0 0; color: var(--muted); }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin: 20px 0;
+    }
+    .stat {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+    }
+    .stat span { display: block; color: var(--muted); font-size: 13px; }
+    .stat strong { display: block; margin-top: 2px; font-size: 22px; font-weight: 650; }
+    .stat strong.down { color: var(--sell); }
+    .stat strong.up { color: var(--buy); }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 20px;
+      align-items: start;
+    }
+    .layout > section { min-width: 0; }
+    section {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      padding: 16px;
+    }
+    h2 { margin: 0 0 12px; font-size: 16px; font-weight: 650; }
+    .pairs { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .pairs button, form button {
+      font: inherit;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--ink);
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .pairs button[aria-pressed="true"] {
+      background: var(--ink);
+      color: white;
+      border-color: var(--ink);
+    }
+    .positions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+    .position { border: 1px solid var(--line); padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+    .position.open.up { border-color: var(--buy); }
+    .position.open.down { border-color: var(--sell); }
+    .price-chart { width: 100%; height: 560px; }
+    .caption { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    .legend { display: flex; gap: 16px; margin-top: 8px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+    .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+    .swatch.up { background: var(--buy); }
+    .swatch.down { background: var(--sell); }
+    form label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+    form input {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      font: inherit;
+      color: var(--ink);
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    form button {
+      width: 100%;
+      margin-top: 4px;
+      background: var(--ink);
+      color: white;
+      border-color: var(--ink);
+    }
+    form button:disabled { opacity: 0.6; cursor: wait; }
+    .hint { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+    .error {
+      margin: 0 0 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--sell);
+      color: var(--sell);
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; background: var(--paper); }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .down { color: var(--sell); }
+    .up { color: var(--buy); }
+    .notes { margin: 16px 0 28px; color: var(--muted); }
+    .notes p { margin: 0 0 8px; }
+    .steps { margin: 0; padding-left: 18px; }
+    .steps li { margin: 4px 0; }
+    @media (max-width: 800px) {
+      .stats, .layout, .positions { grid-template-columns: 1fr; }
+      header, main { width: min(1100px, calc(100vw - 20px)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Paper trading bot</h1>
+    <p>The paper wallet buys and sells when a new 15-minute candle closes. The chart shows the price. Orders stay on this computer.</p>
+  </header>
+  <main>
+    <div class="stats" id="stats"></div>
+    <div class="layout">
+      <section>
+        <h2>Candles</h2>
+        <div class="pairs" id="pairs"></div>
+        <div class="pairs" id="ranges">
+          <button type="button" data-span="48">12 hours</button>
+          <button type="button" data-span="96">1 day</button>
+          <button type="button" data-span="288" aria-pressed="true">3 days</button>
+          <button type="button" data-span="672">1 week</button>
+          <button type="button" data-span="0">All</button>
+        </div>
+        <div class="positions" id="positions"></div>
+        <div id="chart" class="price-chart" role="img" aria-label="Candlestick chart with volume and RSI"></div>
+        <div class="legend">
+          <span><i class="swatch up"></i>Up candle and buy</span>
+          <span><i class="swatch down"></i>Down candle and sell</span>
+        </div>
+        <p class="caption" id="caption"></p>
+      </section>
+      <section>
+        <h2>Rules</h2>
+        <div class="pairs" id="power">
+          <button type="button" id="start">Start</button>
+          <button type="button" id="stop">Stop</button>
+        </div>
+        <p id="error" class="error" hidden></p>
+        <form id="rules" novalidate>
+          <label>RSI buy below<input name="rsi_entry" type="number" min="1" max="98" step="any" value="30"></label>
+          <label>RSI sell above<input name="rsi_exit" type="number" min="2" max="99" step="any" value="70"></label>
+          <label>Stop, percent below the buy<input name="stop_percent" type="number" min="0.1" max="50" step="any" value="10"></label>
+          <label>Target, percent above the buy<input name="target_percent" type="number" min="0.1" max="50" step="any" value="2"></label>
+          <label>Stake per buy, USD<input name="stake_amount" type="number" min="1" max="1000" step="any" value="30"></label>
+          <label>Max open trades<input name="max_open_trades" type="number" min="1" max="10" step="any" value="3"></label>
+          <p class="hint" id="status"></p>
+        </form>
+        <p class="hint" id="fee"></p>
+        <h2 style="margin-top: 18px">Each new candle</h2>
+        <ol class="steps">
+          <li>Wait until the current 15-minute candle closes.</li>
+          <li>Read RSI from the candle that just closed.</li>
+          <li>Sell an open coin if the stop, the target, or RSI says so.</li>
+          <li>Buy if RSI says so, the pair is flat, a slot is free, and cash is enough.</li>
+        </ol>
+      </section>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Bought</th>
+          <th>Pair</th>
+          <th class="num">Buy</th>
+          <th>Sold</th>
+          <th class="num">Sell</th>
+          <th class="num">Profit</th>
+          <th>Why it sold</th>
+        </tr>
+      </thead>
+      <tbody id="trades"></tbody>
+    </table>
+    <div class="notes" id="notes"></div>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+  <script>
+    const chartEl = document.getElementById("chart");
+    const positionsEl = document.getElementById("positions");
+    const stats = document.getElementById("stats");
+    const pairsEl = document.getElementById("pairs");
+    const tradesEl = document.getElementById("trades");
+    const notesEl = document.getElementById("notes");
+    const caption = document.getElementById("caption");
+    const errorEl = document.getElementById("error");
+    const feeEl = document.getElementById("fee");
+    const form = document.getElementById("rules");
+    const startButton = document.getElementById("start");
+    const stopButton = document.getElementById("stop");
+    const statusEl = document.getElementById("status");
+
+    let payload = null;
+    let selected = null;
+    let priceChart = null;
+    let zoom = null;
+    let programmedZoom = null;
+    let busy = false;
+
+    startButton.addEventListener("click", () => submit("start"));
+    stopButton.addEventListener("click", () => submit("stop"));
+    form.addEventListener("change", () => submit(null));
+
+    function submit(command) {
+      const body = Object.fromEntries(new FormData(form).entries());
+      if (command) body.command = command;
+      load(body);
+    }
+
+    async function load(body) {
+      if (busy) return;
+      busy = true;
+      const first = payload == null;
+      if (body) {
+        startButton.disabled = true;
+        stopButton.disabled = true;
+        statusEl.textContent = body.command ? "Checking the latest candle..." : "Saving the rules...";
+      }
+      errorEl.hidden = true;
+      try {
+        const response = await fetch("/api/run", {
+          method: body ? "POST" : "GET",
+          headers: body ? { "Content-Type": "application/json" } : {},
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          errorEl.hidden = false;
+          errorEl.textContent = data.error || "The check failed.";
+          statusEl.textContent = "The check did not finish.";
+          return;
+        }
+        payload = data;
+        selected = selected && data.pairs[selected] ? selected : Object.keys(data.pairs)[0];
+        if (first) {
+          zoom = null;
+          document.querySelectorAll("#ranges button").forEach((button) => {
+            button.setAttribute("aria-pressed", button.dataset.span === "288" ? "true" : "false");
+          });
+        }
+        const running = payload.live.running;
+        startButton.setAttribute("aria-pressed", running ? "true" : "false");
+        stopButton.setAttribute("aria-pressed", running ? "false" : "true");
+        render();
+        statusEl.textContent = payload.live.status;
+      } catch (err) {
+        errorEl.hidden = false;
+        errorEl.textContent = "The page could not reach the bot. Leave python ui.py running.";
+        statusEl.textContent = "The check did not finish.";
+      } finally {
+        busy = false;
+        startButton.disabled = false;
+        stopButton.disabled = false;
+      }
+    }
+
+    function render() {
+      const summary = payload.summary;
+      const currency = payload.currency;
+      const profitClass = summary.profit < 0 ? "down" : summary.profit > 0 ? "up" : "";
+      stats.innerHTML = [
+        stat("Equity", money(summary.equity) + " " + currency),
+        stat("Profit", signedMoney(summary.profit) + " " + currency + " (" + signedPct(summary.profit_pct) + ")", profitClass),
+        stat("Closed trades", String(summary.closed) + "  (" + summary.wins + " wins, " + summary.losses + " losses)"),
+        stat("Still open", String(summary.open)),
+      ].join("");
+
+      const rules = payload.rules;
+      feeEl.textContent = "Paper wallet " + money(rules.wallet) + " " + currency +
+        ", watching since " + payload.live.started_at + " UTC. Fee " +
+        rules.fee_percent.toFixed(2) + "% on the buy and again on the sell.";
+
+      pairsEl.innerHTML = "";
+      Object.keys(payload.pairs).forEach((pair) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = pair;
+        button.setAttribute("aria-pressed", pair === selected ? "true" : "false");
+        button.addEventListener("click", () => {
+          selected = pair;
+          render();
+        });
+        pairsEl.appendChild(button);
+      });
+
+      renderPositions();
+      draw(payload.pairs[selected], selected);
+
+      tradesEl.innerHTML = payload.trades.map((trade) => {
+        const klass = trade.profit < 0 ? "down" : "up";
+        const why = trade.reason_label + (trade.exit_rsi == null ? "" : " (RSI " + trade.exit_rsi.toFixed(1) + ")");
+        return "<tr>" +
+          "<td>" + esc(trade.entry_time) + "</td>" +
+          "<td>" + esc(trade.pair) + "</td>" +
+          '<td class="num">' + price(trade.entry_price) + "</td>" +
+          "<td>" + esc(trade.exit_time) + "</td>" +
+          '<td class="num">' + price(trade.exit_price) + "</td>" +
+          '<td class="num ' + klass + '">' + signedMoney(trade.profit) + " (" + signedPct(trade.profit_pct) + ")</td>" +
+          "<td>" + esc(why) + "</td>" +
+          "</tr>";
+      }).join("");
+
+      const bits = [];
+      payload.skips.forEach((skip) => {
+        bits.push("<p>" + skip.count + " buy signals did not trade: " + esc(skip.label) + ".</p>");
+      });
+      payload.notes.forEach((note) => bits.push("<p>" + esc(note) + "</p>"));
+      notesEl.innerHTML = bits.join("");
+    }
+
+    function stat(label, value, klass) {
+      return '<div class="stat"><span>' + label + '</span><strong class="' + (klass || "") + '">' + value + "</strong></div>";
+    }
+
+    function renderPositions() {
+      const byPair = {};
+      (payload.open_trades || []).forEach((trade) => { byPair[trade.pair] = trade; });
+      positionsEl.innerHTML = Object.keys(payload.pairs).map((pair) => {
+        const series = payload.pairs[pair];
+        const last = series.close[series.close.length - 1];
+        const trade = byPair[pair];
+        const choice = (payload.live.decisions || []).find((item) => item.pair === pair);
+        const next = choice ? "<span>" + esc(choice.text) + "</span>" : "";
+        if (!trade) {
+          return '<div class="position"><strong>' + esc(pair) + '</strong><span>Flat</span><span>Last ' +
+            price(last) + " " + payload.currency + "</span>" + next + "</div>";
+        }
+        const klass = trade.unrealized < 0 ? "down" : "up";
+        return '<div class="position open ' + klass + '"><strong>' + esc(pair) + " open</strong>" +
+          "<span>Bought " + esc(trade.entry_time) + " at " + price(trade.entry_price) + "</span>" +
+          "<span>Now " + price(trade.last_price) + "</span>" +
+          '<span class="' + klass + '">Unrealized ' + signedMoney(trade.unrealized) + " " + payload.currency +
+          " (" + signedPct(trade.unrealized_pct) + ")</span>" +
+          "<span>Stop " + price(trade.stop_price) + " · Target " + price(trade.target_price) + "</span>" +
+          "<span>Stake " + money(trade.stake) + " " + payload.currency + "</span>" + next + "</div>";
+      }).join("");
+    }
+
+    document.getElementById("ranges").addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button || !payload || !selected) return;
+      const span = Number(button.dataset.span);
+      const total = payload.pairs[selected].close.length;
+      zoom = { start: span ? Math.max(0, (1 - span / total) * 100) : 0, end: 100 };
+      document.querySelectorAll("#ranges button").forEach((item) => {
+        item.setAttribute("aria-pressed", item === button ? "true" : "false");
+      });
+      draw(payload.pairs[selected], selected);
+    });
+
+    function draw(series, pair) {
+      if (typeof echarts === "undefined") {
+        chartEl.textContent = "The chart library did not load. Refresh the page once the network is available.";
+        return;
+      }
+      if (!priceChart) {
+        priceChart = echarts.init(chartEl);
+        priceChart.on("datazoom", (event) => {
+          const change = event.batch && event.batch[0] ? event.batch[0] : event;
+          if (change.start != null && change.end != null) {
+            const same = programmedZoom &&
+              Math.abs(change.start - programmedZoom.start) < 0.05 &&
+              Math.abs(change.end - programmedZoom.end) < 0.05;
+            zoom = { start: change.start, end: change.end };
+            if (!same) {
+              programmedZoom = null;
+              document.querySelectorAll("#ranges button").forEach((item) => item.setAttribute("aria-pressed", "false"));
+            }
+          }
+          if (payload && selected) writeCaption(payload.pairs[selected], selected);
+        });
+        window.addEventListener("resize", () => priceChart && priceChart.resize());
+      }
+
+      const total = series.close.length;
+      const view = zoom || { start: Math.max(0, (1 - Math.min(288, total) / total) * 100), end: 100 };
+      const candles = series.open.map((open, index) => [open, series.close[index], series.low[index], series.high[index]]);
+      const volume = series.volume.map((value, index) => ({
+        value,
+        itemStyle: { color: series.close[index] >= series.open[index] ? "#0b7a43" : "#b42318" },
+      }));
+      const markPoint = payload.markers
+        .filter((mark) => mark.pair === pair && series.time.includes(mark.time))
+        .map((mark) => {
+          const buy = mark.action === "ENTER";
+          return {
+            name: buy ? "Buy" : "Sell",
+            coord: [mark.time, mark.price],
+            value: (buy ? "Buy " : "Sell ") + price(mark.price),
+            symbol: "triangle",
+            symbolSize: 12,
+            symbolRotate: buy ? 0 : 180,
+            symbolOffset: buy ? [0, 14] : [0, -14],
+            itemStyle: { color: buy ? "#0b7a43" : "#b42318" },
+            label: { show: false },
+          };
+        });
+      const lastClose = series.close[series.close.length - 1];
+      const lastColor = lastClose >= series.open[series.open.length - 1] ? "#0b7a43" : "#b42318";
+      const markLine = [
+        {
+          yAxis: lastClose,
+          lineStyle: { color: lastColor, type: "dotted" },
+          label: { formatter: price(lastClose), color: "#fff", backgroundColor: lastColor, padding: [2, 4] },
+        },
+      ];
+      (payload.open_trades || [])
+        .filter((trade) => trade.pair === pair)
+        .forEach((trade) => {
+          markLine.push(
+            { yAxis: trade.entry_price, lineStyle: { color: "#0b7a43", type: "dashed" }, label: { formatter: "Entry " + price(trade.entry_price) } },
+            { yAxis: trade.stop_price, lineStyle: { color: "#b42318", type: "dashed" }, label: { formatter: "Stop " + price(trade.stop_price) } },
+            { yAxis: trade.target_price, lineStyle: { color: "#1d4e89", type: "dashed" }, label: { formatter: "Target " + price(trade.target_price) } },
+          );
+        });
+
+      programmedZoom = view;
+      priceChart.setOption({
+        animation: false,
+        legend: { top: 0, data: ["Price", "Volume", "RSI"] },
+        axisPointer: { link: [{ xAxisIndex: "all" }] },
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "cross" },
+          formatter: (items) => {
+            const time = items[0].axisValue;
+            const lines = [time];
+            const candle = items.find((item) => item.seriesName === "Price");
+            if (candle && Array.isArray(candle.data)) {
+              const values = candle.data.length >= 5 ? candle.data.slice(1) : candle.data;
+              lines.push("Open " + price(values[0]));
+              lines.push("High " + price(values[3]));
+              lines.push("Low " + price(values[2]));
+              lines.push("Close " + price(values[1]));
+            }
+            const bar = items.find((item) => item.seriesName === "Volume");
+            if (bar) {
+              const amount = bar.data && bar.data.value != null ? bar.data.value : bar.value;
+              lines.push("Volume " + Number(amount).toFixed(2));
+            }
+            const rsi = items.find((item) => item.seriesName === "RSI");
+            if (rsi && rsi.data != null) lines.push("RSI " + Number(rsi.data).toFixed(1));
+            return lines.join("<br>");
+          },
+        },
+        toolbox: {
+          right: 8,
+          feature: {
+            dataZoom: { yAxisIndex: "none", title: { zoom: "Select time", back: "Undo" } },
+            restore: { title: "Reset view" },
+          },
+        },
+        grid: [
+          { left: 12, right: 72, top: 36, height: 280 },
+          { left: 12, right: 72, top: 332, height: 56 },
+          { left: 12, right: 72, top: 408, height: 78 },
+        ],
+        xAxis: [0, 1, 2].map((gridIndex) => ({
+          type: "category",
+          data: series.time,
+          gridIndex,
+          boundaryGap: true,
+          axisLabel: { show: gridIndex === 2 },
+          axisTick: { show: gridIndex === 2 },
+        })),
+        yAxis: [
+          { scale: true, gridIndex: 0, position: "right" },
+          { scale: true, gridIndex: 1, position: "right", splitNumber: 2, axisLabel: { show: false } },
+          { min: 0, max: 100, gridIndex: 2, position: "right", splitNumber: 2 },
+        ],
+        dataZoom: [
+          {
+            type: "inside",
+            xAxisIndex: [0, 1, 2],
+            start: view.start,
+            end: view.end,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true,
+            moveOnMouseWheel: false,
+          },
+          {
+            type: "slider",
+            xAxisIndex: [0, 1, 2],
+            bottom: 8,
+            height: 22,
+            start: view.start,
+            end: view.end,
+            showDetail: true,
+          },
+        ],
+        series: [
+          {
+            name: "Price",
+            type: "candlestick",
+            data: candles,
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            itemStyle: { color: "#0b7a43", color0: "#b42318", borderColor: "#0b7a43", borderColor0: "#b42318" },
+            markPoint: { data: markPoint },
+            markLine: { symbol: "none", data: markLine },
+          },
+          { name: "Volume", type: "bar", data: volume, xAxisIndex: 1, yAxisIndex: 1 },
+          {
+            name: "RSI",
+            type: "line",
+            data: series.rsi,
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            showSymbol: false,
+            lineStyle: { width: 1.4, color: "#1a1d21" },
+            markLine: {
+              symbol: "none",
+              data: [
+                { yAxis: payload.rules.rsi_exit, label: { formatter: "sell " + payload.rules.rsi_exit }, lineStyle: { color: "#d8dee6" } },
+                { yAxis: payload.rules.rsi_entry, label: { formatter: "buy " + payload.rules.rsi_entry }, lineStyle: { color: "#d8dee6" } },
+              ],
+            },
+          },
+        ],
+      }, true);
+      priceChart.resize();
+      writeCaption(series, pair);
+    }
+
+    function writeCaption(series, pair) {
+      const total = series.time.length;
+      const view = zoom || { start: Math.max(0, (1 - Math.min(288, total) / total) * 100), end: 100 };
+      const from = Math.max(0, Math.min(total - 1, Math.round(view.start / 100 * (total - 1))));
+      const to = Math.max(from, Math.min(total - 1, Math.round(view.end / 100 * (total - 1))));
+      caption.textContent = pair + " from " + series.time[from] + " to " + series.time[to] +
+        ". A triangle is a buy or sell this bot placed after " + payload.live.started_at +
+        " UTC. Drag the bar under the chart to choose the time. Scroll on the chart to zoom. Drag the candles to move.";
+    }
+
+    function esc(value) {
+      return String(value).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      }[ch]));
+    }
+
+    function money(value) { return Number(value).toFixed(2); }
+    function signedMoney(value) {
+      const number = Number(value);
+      return (number > 0 ? "+" : "") + number.toFixed(2);
+    }
+    function signedPct(value) {
+      const number = Number(value) * 100;
+      return (number > 0 ? "+" : "") + number.toFixed(2) + "%";
+    }
+    function price(value) {
+      const number = Number(value);
+      return number >= 100 ? number.toFixed(2) : number.toFixed(4);
+    }
+
+    load(null);
+    setInterval(() => load(null), 20000);
+  </script>
+</body>
+</html>

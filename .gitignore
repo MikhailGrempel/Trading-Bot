@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+*.local
+.DS_Store
+web/node_modules/
+data/paper_state.json
